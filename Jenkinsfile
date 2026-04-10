@@ -1,17 +1,13 @@
 pipeline {
-    agent any   // ❗ เปลี่ยนจาก label เพราะคุณยังไม่มี k8s-agent
-
-    triggers {
-        githubPush()
-    }
+    agent any
 
     environment {
         APP_NAME  = 'narukami47/my-nginx'
         IMAGE_TAG = "${BUILD_NUMBER}"
+        KUBECONFIG = '/var/jenkins_home/.kube/config'
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -20,57 +16,35 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                docker build -t ${APP_NAME}:${IMAGE_TAG} .
-                docker tag ${APP_NAME}:${IMAGE_TAG} ${APP_NAME}:latest
-                """
+                sh "docker build -t ${APP_NAME}:${IMAGE_TAG} ."
             }
         }
 
-        stage('Load Image to kind') {
+        stage('Load Image to Kind') {
             steps {
-                sh """
-                kind load docker-image ${APP_NAME}:${IMAGE_TAG}
-                """
+                sh "kind load docker-image ${APP_NAME}:${IMAGE_TAG}"
             }
         }
-
+    stage('Debug') {
+        steps {
+          sh 'echo "=== CHECK FILE ==="'
+          sh 'cat Jenkinsfile || true'
+        }
+}
         stage('Deploy to Kubernetes') {
             steps {
-                sh """
-                kubectl apply -f k8s/deployment.yaml
-                kubectl apply -f k8s/service.yaml
-                kubectl apply -f k8s/ingress.yaml
-                """
+                sh "kubectl apply -f k8s/deployment.yaml"
+                sh "kubectl apply -f k8s/service.yaml"
+                sh "kubectl apply -f k8s/ingress.yaml"
+                sh "kubectl set image deployment/nginx-deployment nginx-container=${APP_NAME}:${IMAGE_TAG}"
             }
         }
 
-        stage('Update Image (Rolling Update)') {
+        stage('Verify') {
             steps {
-                sh """
-                kubectl set image deployment/my-nginx nginx=${APP_NAME}:${IMAGE_TAG}
-                """
+                sh "kubectl rollout status deployment/nginx-deployment"
+                sh "kubectl get pods"
             }
-        }
-
-        stage('Verify Deployment') {
-            steps {
-                sh """
-                kubectl rollout status deployment/my-nginx --timeout=120s
-                kubectl get pods -l app=my-nginx
-                kubectl get svc my-nginx-service
-                kubectl get ingress my-nginx-ingress
-                """
-            }
-        }
-    }
-
-    post {
-        success {
-            echo "Deployment successful! Access at http://my-nginx.local"
-        }
-        failure {
-            echo "Deployment failed! Check logs."
         }
     }
 }
